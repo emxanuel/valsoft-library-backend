@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 from sqlmodel import Session, col, select
 
 from database.models.books import Book
+from database.models.clients import Client
 from database.models.loans import Loan
 
 
@@ -48,10 +49,13 @@ def get_open_loan_for_book(session: Session, book_id: int) -> Optional[Loan]:
     return session.exec(stmt).first()
 
 
-def list_open_loans_for_user(session: Session, user_id: int) -> list[tuple[Loan, Book]]:
+def list_open_loans_for_user(
+    session: Session, user_id: int
+) -> list[tuple[Loan, Book, Optional[Client]]]:
     stmt = (
-        select(Loan, Book)
+        select(Loan, Book, Client)
         .join(Book, Loan.book_id == Book.id)  # type: ignore[arg-type]
+        .outerjoin(Client, Loan.client_id == Client.id)  # type: ignore[arg-type]
         .where(Loan.user_id == user_id)
         .where(col(Loan.returned_at).is_(None))
         .where(col(Book.deleted_at).is_(None))
@@ -60,13 +64,86 @@ def list_open_loans_for_user(session: Session, user_id: int) -> list[tuple[Loan,
     return list(session.exec(stmt).all())
 
 
-def list_books(
+def normalize_client_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def get_or_create_client(
+    session: Session,
+    *,
+    name: str,
+    email: str,
+    phone: Optional[str] = None,
+) -> Client:
+    norm_email = normalize_client_email(email)
+    stmt = select(Client).where(Client.email == norm_email)
+    existing = session.exec(stmt).first()
+    phone_clean = phone.strip() if phone and phone.strip() else None
+    if existing is not None:
+        existing.name = name.strip()
+        existing.phone = phone_clean
+        existing.updated_at = datetime.utcnow()
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        return existing
+    client = Client(
+        name=name.strip(),
+        email=norm_email,
+        phone=phone_clean,
+    )
+    session.add(client)
+    session.commit()
+    session.refresh(client)
+    return client
+
+
+def _client_search_filters(*, q: Optional[str] = None) -> list:
+    filters: list = []
+    if q:
+        term = f"%{q}%"
+        filters.append(
+            or_(
+                col(Client.name).ilike(term),
+                col(Client.email).ilike(term),
+            )
+        )
+    return filters
+
+
+def list_clients(
     session: Session,
     *,
     q: Optional[str] = None,
+    offset: int = 0,
+    limit: int = 20,
+) -> tuple[list[Client], int]:
+    filters = _client_search_filters(q=q)
+    if filters:
+        where = and_(*filters)
+        count_stmt = select(func.count()).select_from(Client).where(where)
+        stmt = (
+            select(Client)
+            .where(where)
+            .order_by(col(Client.name))
+            .offset(offset)
+            .limit(limit)
+        )
+    else:
+        count_stmt = select(func.count()).select_from(Client)
+        stmt = (
+            select(Client).order_by(col(Client.name)).offset(offset).limit(limit)
+        )
+    total = session.exec(count_stmt).one()
+    clients = list(session.exec(stmt).all())
+    return clients, int(total)
+
+
+def _active_book_filters(
+    *,
+    q: Optional[str] = None,
     genre: Optional[str] = None,
-) -> list[Book]:
-    stmt = select(Book)
+) -> list:
     filters: list = [col(Book.deleted_at).is_(None)]
     if q:
         term = f"%{q}%"
@@ -79,10 +156,32 @@ def list_books(
         )
     if genre:
         filters.append(col(Book.genre) == genre)
-    if filters:
-        stmt = stmt.where(and_(*filters))
-    stmt = stmt.order_by(col(Book.title))
-    return list(session.exec(stmt).all())
+    return filters
+
+
+def list_books(
+    session: Session,
+    *,
+    q: Optional[str] = None,
+    genre: Optional[str] = None,
+    offset: int = 0,
+    limit: int = 20,
+) -> tuple[list[Book], int]:
+    filters = _active_book_filters(q=q, genre=genre)
+    where = and_(*filters)
+
+    count_stmt = select(func.count()).select_from(Book).where(where)
+    total = session.exec(count_stmt).one()
+
+    stmt = (
+        select(Book)
+        .where(where)
+        .order_by(col(Book.title))
+        .offset(offset)
+        .limit(limit)
+    )
+    books = list(session.exec(stmt).all())
+    return books, int(total)
 
 
 def create_book(
@@ -94,6 +193,7 @@ def create_book(
     description: Optional[str] = None,
     published_year: Optional[int] = None,
     genre: Optional[str] = None,
+    image_url: Optional[str] = None,
 ) -> Book:
     book = Book(
         title=title,
@@ -102,6 +202,7 @@ def create_book(
         description=description,
         published_year=published_year,
         genre=genre,
+        image_url=image_url,
     )
     session.add(book)
     session.commit()
@@ -119,6 +220,7 @@ def update_book(
     description: Optional[str] = None,
     published_year: Optional[int] = None,
     genre: Optional[str] = None,
+    image_url: Optional[str] = None,
 ) -> Book:
     if title is not None:
         book.title = title
@@ -132,6 +234,8 @@ def update_book(
         book.published_year = published_year
     if genre is not None:
         book.genre = genre
+    if image_url is not None:
+        book.image_url = image_url
     book.updated_at = datetime.utcnow()
     session.add(book)
     session.commit()
@@ -154,24 +258,34 @@ def checkout_book(
     *,
     book_id: int,
     user_id: int,
+    client_name: str,
+    client_email: str,
+    client_phone: Optional[str] = None,
     due_at: Optional[datetime] = None,
-) -> Loan:
+) -> tuple[Loan, Client]:
     if get_book_by_id(session, book_id) is None:
         msg = "Book not found"
         raise ValueError(msg)
     if book_has_open_loan(session, book_id):
         msg = "Book is already checked out"
         raise ValueError(msg)
+    client = get_or_create_client(
+        session,
+        name=client_name,
+        email=client_email,
+        phone=client_phone,
+    )
     loan = Loan(
         book_id=book_id,
         user_id=user_id,
+        client_id=client.id,
         due_at=due_at,
         returned_at=None,
     )
     session.add(loan)
     session.commit()
     session.refresh(loan)
-    return loan
+    return loan, client
 
 
 def checkin_book(

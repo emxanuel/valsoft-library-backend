@@ -41,15 +41,17 @@ Implemented under [`features/library/`](features/library/).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/library/books` | List books; optional `q` (search title, author, ISBN), `genre` (exact) |
+| `GET` | `/library/books` | Paginated list; optional `q`, `genre`; `offset` (default 0), `limit` (default 20, max 100). JSON: `items`, `total`, `limit`, `offset` |
 | `POST` | `/library/books` | Create a book |
 | `GET` | `/library/books/{book_id}` | Get one book (`is_checked_out` reflects active loan) |
 | `PATCH` | `/library/books/{book_id}` | Update a book |
 | `DELETE` | `/library/books/{book_id}` | Soft delete: sets `deleted_at` (row kept); fails if the book is checked out. Loan history is not removed. |
-| `POST` | `/library/books/{book_id}/checkout` | Current user borrows the book; body optional `due_at` |
-| `POST` | `/library/books/{book_id}/checkin` | Return the book (borrower only) |
+| `GET` | `/library/loans` | Open loans for the current user; includes book fields and patron (`client_*`) when `loan.client_id` is set |
+| `GET` | `/library/clients` | Paginated patron directory; optional `q` (name/email); `offset`, `limit` (default 20, max 100). JSON: `items`, `total`, `limit`, `offset` |
+| `POST` | `/library/books/{book_id}/checkout` | Staff checkout; body: `client` (`name`, `email`, optional `phone`) and optional `due_at`. Upserts `client` by normalized email and sets `loan.client_id`. |
+| `POST` | `/library/books/{book_id}/checkin` | Return the book (same staff user who checked out; see below) |
 
-Circulation is stored in the `loan` table; **checked out** means an open loan (`returned_at` is null). **Checked in** sets `returned_at`.
+Circulation is stored in the `loan` table; **checked out** means an open loan (`returned_at` is null). **Checked in** sets `returned_at`. Patron contact info lives in the `client` table; each new checkout links the loan via `client_id` (nullable for legacy rows). The loan’s `user_id` is the staff account that performed checkout/check-in.
 
 List and get endpoints only return books with `deleted_at` null. ISBN uniqueness applies to active (non-deleted) rows only, so a new book can reuse an ISBN after the previous copy was soft-deleted.
 

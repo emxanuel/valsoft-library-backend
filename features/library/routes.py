@@ -13,14 +13,17 @@ from features.library.controllers import (
     delete_book_controller,
     get_book_controller,
     list_books_controller,
+    list_clients_controller,
     list_my_loans_controller,
     update_book_controller,
 )
 from features.library.schemas import (
     BookCreate,
+    BookListPage,
     BookRead,
     BookUpdate,
     CheckoutRequest,
+    ClientListPage,
     LoanRead,
     MyOpenLoanRead,
 )
@@ -39,13 +42,41 @@ def list_my_loans(
     return list_my_loans_controller(session, current_user)
 
 
-@library_router.get("/books", response_model=list[BookRead])
+@library_router.get("/clients", response_model=ClientListPage)
+def list_clients(
+    session: Session = Depends(get_session),
+    q: Optional[str] = Query(default=None, description="Search name or email"),
+    offset: int = Query(default=0, ge=0, description="Number of rows to skip"),
+    limit: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+        description="Page size (max 100)",
+    ),
+) -> ClientListPage:
+    return list_clients_controller(session, q=q, offset=offset, limit=limit)
+
+
+@library_router.get("/books", response_model=BookListPage)
 def list_books(
     session: Session = Depends(get_session),
     q: Optional[str] = Query(default=None, description="Search title, author, or ISBN"),
     genre: Optional[str] = Query(default=None, description="Exact genre match"),
-) -> list[BookRead]:
-    return list_books_controller(session, q=q, genre=genre)
+    offset: int = Query(default=0, ge=0, description="Number of rows to skip"),
+    limit: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+        description="Page size (max 100)",
+    ),
+) -> BookListPage:
+    return list_books_controller(
+        session,
+        q=q,
+        genre=genre,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @library_router.post(

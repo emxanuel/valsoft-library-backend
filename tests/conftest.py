@@ -21,11 +21,11 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from core.create_app import create_app
-from database.models import Book, Loan, Users  # noqa: F401
+from database.models import Book, Client, Loan, Users  # noqa: F401
 from database.session import get_session
 
 # Register models on metadata for create_all
-_ = (Book, Loan, Users)
+_ = (Book, Client, Loan, Users)
 
 
 def _ensure_book_soft_delete_indexes(engine) -> None:
@@ -75,11 +75,12 @@ def db_session(engine):
         session.rollback()
         if session.bind.dialect.name == "sqlite":
             session.execute(text("DELETE FROM loan"))
+            session.execute(text("DELETE FROM client"))
             session.execute(text("DELETE FROM book"))
             session.execute(text("DELETE FROM users"))
         else:
             session.execute(
-                text("TRUNCATE loan, book, users RESTART IDENTITY CASCADE")
+                text("TRUNCATE loan, client, book, users RESTART IDENTITY CASCADE")
             )
         session.commit()
         session.close()
