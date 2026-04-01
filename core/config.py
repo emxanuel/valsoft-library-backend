@@ -38,9 +38,11 @@ class Settings(BaseSettings):
     @field_validator("DATABASE_URL")
     @classmethod
     def validate_database_url(cls, v: str) -> str:
-        if not v.startswith("postgresql+psycopg://"):
-            raise ValueError("DATABASE_URL must use 'postgresql+psycopg://' scheme")
-        return v
+        if v.startswith("postgresql+psycopg://") or v.startswith("sqlite"):
+            return v
+        raise ValueError(
+            "DATABASE_URL must use 'postgresql+psycopg://' or a 'sqlite' scheme"
+        )
 
 
 @lru_cache
