@@ -1,0 +1,14 @@
+This directory contains Alembic database migrations for the backend.
+
+- Configuration file: `../alembic.ini`
+- Environment script: `env.py`
+- Template for new revisions: `script.py.mako`
+
+To create an initial migration (once Alembic is installed) run from the `backend` directory:
+
+    alembic revision --autogenerate -m "init"
+
+Then apply migrations with:
+
+    alembic upgrade head
+
