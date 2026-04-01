@@ -26,7 +26,7 @@ def create_app() -> FastAPI:
     app.middleware("http")(exception_handler_middleware)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=["https://valsoft-library-frontend.vercel.app"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
