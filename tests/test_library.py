@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 def test_library_requires_auth(client: TestClient):
     response = client.get("/library/books")
     assert response.status_code == 401
+    assert client.get("/library/loans").status_code == 401
 
 
 def test_books_crud(authenticated_client: TestClient):
@@ -154,6 +155,29 @@ def test_checkin_flow(authenticated_client: TestClient):
     assert checkin.status_code == 200
     assert checkin.json()["returned_at"] is not None
     assert c.get(f"/library/books/{book_id}").json()["is_checked_out"] is False
+
+
+def test_list_my_open_loans(authenticated_client: TestClient):
+    c = authenticated_client
+    assert c.get("/library/loans").json() == []
+
+    book_id = c.post(
+        "/library/books",
+        json={"title": "Loaned Title", "author": "Loaned Author"},
+    ).json()["id"]
+
+    assert c.get("/library/loans").json() == []
+
+    c.post(f"/library/books/{book_id}/checkout", json={})
+    loans = c.get("/library/loans").json()
+    assert len(loans) == 1
+    assert loans[0]["book_id"] == book_id
+    assert loans[0]["book_title"] == "Loaned Title"
+    assert loans[0]["book_author"] == "Loaned Author"
+    assert loans[0]["due_at"] is None
+
+    c.post(f"/library/books/{book_id}/checkin")
+    assert c.get("/library/loans").json() == []
 
 
 def test_checkin_no_active_loan_returns_404(authenticated_client: TestClient):

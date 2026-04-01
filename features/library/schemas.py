@@ -46,3 +46,12 @@ class LoanRead(BaseModel):
     checked_out_at: datetime
     due_at: Optional[datetime]
     returned_at: Optional[datetime]
+
+
+class MyOpenLoanRead(BaseModel):
+    loan_id: int
+    book_id: int
+    book_title: str
+    book_author: str
+    checked_out_at: datetime
+    due_at: Optional[datetime] = None

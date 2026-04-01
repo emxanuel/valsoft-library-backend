@@ -13,6 +13,7 @@ from features.library.schemas import (
     BookUpdate,
     CheckoutRequest,
     LoanRead,
+    MyOpenLoanRead,
 )
 
 
@@ -41,6 +42,33 @@ def _to_book_read(
         updated_at=book.updated_at,
         is_checked_out=is_out,
     )
+
+
+def list_my_loans_controller(
+    session: Session,
+    current_user: Users,
+) -> list[MyOpenLoanRead]:
+    rows = library_services.list_open_loans_for_user(
+        session,
+        current_user.id,  # type: ignore[arg-type]
+    )
+    result: list[MyOpenLoanRead] = []
+    for loan, book in rows:
+        lid = loan.id
+        bid = book.id
+        if lid is None or bid is None:
+            raise RuntimeError("loan or book id missing after persist")
+        result.append(
+            MyOpenLoanRead(
+                loan_id=lid,
+                book_id=bid,
+                book_title=book.title,
+                book_author=book.author,
+                checked_out_at=loan.checked_out_at,
+                due_at=loan.due_at,
+            )
+        )
+    return result
 
 
 def list_books_controller(

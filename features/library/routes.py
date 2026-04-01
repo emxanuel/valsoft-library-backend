@@ -13,14 +13,30 @@ from features.library.controllers import (
     delete_book_controller,
     get_book_controller,
     list_books_controller,
+    list_my_loans_controller,
     update_book_controller,
 )
-from features.library.schemas import BookCreate, BookRead, BookUpdate, CheckoutRequest, LoanRead
+from features.library.schemas import (
+    BookCreate,
+    BookRead,
+    BookUpdate,
+    CheckoutRequest,
+    LoanRead,
+    MyOpenLoanRead,
+)
 
 library_router = APIRouter(
     tags=["library"],
     dependencies=[Depends(get_current_user)],
 )
+
+
+@library_router.get("/loans", response_model=list[MyOpenLoanRead])
+def list_my_loans(
+    session: Session = Depends(get_session),
+    current_user: Users = Depends(get_current_user),
+) -> list[MyOpenLoanRead]:
+    return list_my_loans_controller(session, current_user)
 
 
 @library_router.get("/books", response_model=list[BookRead])

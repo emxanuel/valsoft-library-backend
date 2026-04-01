@@ -48,6 +48,18 @@ def get_open_loan_for_book(session: Session, book_id: int) -> Optional[Loan]:
     return session.exec(stmt).first()
 
 
+def list_open_loans_for_user(session: Session, user_id: int) -> list[tuple[Loan, Book]]:
+    stmt = (
+        select(Loan, Book)
+        .join(Book, Loan.book_id == Book.id)  # type: ignore[arg-type]
+        .where(Loan.user_id == user_id)
+        .where(col(Loan.returned_at).is_(None))
+        .where(col(Book.deleted_at).is_(None))
+        .order_by(col(Loan.checked_out_at).desc())
+    )
+    return list(session.exec(stmt).all())
+
+
 def list_books(
     session: Session,
     *,
