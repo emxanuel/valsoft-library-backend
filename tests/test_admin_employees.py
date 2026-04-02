@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from database.models import Book, Loan
+from database.models import Book, BookCopy, Loan
 from database.models.users import UserRole
 from tests.conftest import create_staff_in_db, register_user
 
@@ -81,7 +81,11 @@ def test_cannot_delete_employee_with_loan(admin_client: TestClient, db_session: 
     db_session.add(book)
     db_session.commit()
     db_session.refresh(book)
-    loan = Loan(book_id=book.id, user_id=emp.id)
+    copy = BookCopy(book_id=book.id)
+    db_session.add(copy)
+    db_session.commit()
+    db_session.refresh(copy)
+    loan = Loan(copy_id=copy.id, user_id=emp.id)
     db_session.add(loan)
     db_session.commit()
 

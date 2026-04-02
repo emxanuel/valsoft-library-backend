@@ -7,7 +7,7 @@ from sqlalchemy import and_, func, or_
 from sqlmodel import Session, col, select
 
 from database.models.books import Book
-from features.loans import services as loan_services
+from features.books import copy_services
 
 
 def get_book_by_id(session: Session, book_id: int) -> Optional[Book]:
@@ -85,6 +85,10 @@ def create_book(
     session.add(book)
     session.commit()
     session.refresh(book)
+    if book.id is None:
+        raise RuntimeError("book id missing after persist")
+    copy_services.create_copy_for_book(session, book.id)
+    session.refresh(book)
     return book
 
 
@@ -122,9 +126,12 @@ def update_book(
 
 
 def delete_book(session: Session, book: Book) -> None:
-    if loan_services.book_has_open_loan(session, book.id):  # type: ignore[arg-type]
+    if book.id is None:
+        raise RuntimeError("book id missing")
+    if copy_services.any_copy_has_open_loan(session, book.id):
         msg = "Cannot delete a book that is currently checked out"
         raise ValueError(msg)
+    copy_services.soft_delete_all_copies_for_book(session, book.id)
     book.deleted_at = datetime.utcnow()
     book.updated_at = datetime.utcnow()
     session.add(book)

@@ -35,6 +35,8 @@ class BookRead(BaseModel):
     image_url: Optional[str]
     created_at: datetime
     updated_at: datetime
+    total_copies: int
+    available_copies: int
     is_checked_out: bool
 
 
@@ -43,3 +45,24 @@ class BookListPage(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class BookCopyCreate(BaseModel):
+    barcode: Optional[str] = None
+
+
+class BookCopyUpdate(BaseModel):
+    barcode: Optional[str] = None
+
+
+class BookCopyRead(BaseModel):
+    id: int
+    book_id: int
+    barcode: Optional[str]
+    is_checked_out: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class BookCopyListResponse(BaseModel):
+    items: list[BookCopyRead]

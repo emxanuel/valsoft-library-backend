@@ -5,37 +5,36 @@ from typing import Optional
 
 from sqlmodel import Session, col, select
 
+from database.models.book_copies import BookCopy
 from database.models.books import Book
 from database.models.clients import Client
 from database.models.loans import Loan
+from features.books import copy_services
 from features.clients import services as client_services
 
 
-def book_ids_with_open_loans(session: Session, book_ids: list[int]) -> set[int]:
-    if not book_ids:
-        return set()
-    stmt = (
-        select(Loan.book_id)
-        .where(col(Loan.book_id).in_(book_ids))
-        .where(col(Loan.returned_at).is_(None))
-    )
-    return set(session.exec(stmt).all())
+def copy_ids_with_open_loans(session: Session, copy_ids: list[int]) -> set[int]:
+    return copy_services.copy_ids_with_open_loans(session, copy_ids)
 
 
-def book_has_open_loan(session: Session, book_id: int) -> bool:
+def copy_has_open_loan(session: Session, copy_id: int) -> bool:
+    return copy_services.copy_has_open_loan(session, copy_id)
+
+
+def get_open_loan_for_copy(session: Session, copy_id: int) -> Optional[Loan]:
     stmt = (
-        select(Loan.id)
-        .where(Loan.book_id == book_id)
+        select(Loan)
+        .where(Loan.copy_id == copy_id)
         .where(col(Loan.returned_at).is_(None))
         .limit(1)
     )
-    return session.exec(stmt).first() is not None
+    return session.exec(stmt).first()
 
 
-def get_open_loan_for_book(session: Session, book_id: int) -> Optional[Loan]:
+def get_open_loan_by_id(session: Session, loan_id: int) -> Optional[Loan]:
     stmt = (
         select(Loan)
-        .where(Loan.book_id == book_id)
+        .where(Loan.id == loan_id)
         .where(col(Loan.returned_at).is_(None))
         .limit(1)
     )
@@ -44,14 +43,16 @@ def get_open_loan_for_book(session: Session, book_id: int) -> Optional[Loan]:
 
 def list_open_loans_for_user(
     session: Session, user_id: int
-) -> list[tuple[Loan, Book, Optional[Client]]]:
+) -> list[tuple[Loan, BookCopy, Book, Optional[Client]]]:
     stmt = (
-        select(Loan, Book, Client)
-        .join(Book, Loan.book_id == Book.id)  # type: ignore[arg-type]
+        select(Loan, BookCopy, Book, Client)
+        .join(BookCopy, Loan.copy_id == BookCopy.id)  # type: ignore[arg-type]
+        .join(Book, BookCopy.book_id == Book.id)  # type: ignore[arg-type]
         .outerjoin(Client, Loan.client_id == Client.id)  # type: ignore[arg-type]
         .where(Loan.user_id == user_id)
         .where(col(Loan.returned_at).is_(None))
         .where(col(Book.deleted_at).is_(None))
+        .where(col(BookCopy.deleted_at).is_(None))
         .order_by(col(Loan.checked_out_at).desc())
     )
     return list(session.exec(stmt).all())
@@ -66,14 +67,29 @@ def checkout_book(
     client_email: str,
     client_phone: Optional[str] = None,
     due_at: Optional[datetime] = None,
+    copy_id: Optional[int] = None,
 ) -> tuple[Loan, Client]:
     book = session.get(Book, book_id)
     if book is None or book.deleted_at is not None:
         msg = "Book not found"
         raise ValueError(msg)
-    if book_has_open_loan(session, book_id):
-        msg = "Book is already checked out"
-        raise ValueError(msg)
+
+    resolved_copy_id: Optional[int]
+    if copy_id is not None:
+        bc = copy_services.get_copy_by_id(session, copy_id)
+        if bc is None or bc.book_id != book_id:
+            msg = "Copy not found for this book"
+            raise ValueError(msg)
+        if copy_services.copy_has_open_loan(session, copy_id):
+            msg = "Copy is already checked out"
+            raise ValueError(msg)
+        resolved_copy_id = copy_id
+    else:
+        resolved_copy_id = copy_services.find_first_available_copy_id(session, book_id)
+        if resolved_copy_id is None:
+            msg = "No copies available to check out"
+            raise ValueError(msg)
+
     client = client_services.get_or_create_client(
         session,
         name=client_name,
@@ -81,7 +97,7 @@ def checkout_book(
         phone=client_phone,
     )
     loan = Loan(
-        book_id=book_id,
+        copy_id=resolved_copy_id,
         user_id=user_id,
         client_id=client.id,
         due_at=due_at,
@@ -93,18 +109,18 @@ def checkout_book(
     return loan, client
 
 
-def checkin_book(
+def checkin_loan(
     session: Session,
     *,
-    book_id: int,
+    loan_id: int,
     acting_user_id: int,
 ) -> Loan:
-    loan = get_open_loan_for_book(session, book_id)
+    loan = get_open_loan_by_id(session, loan_id)
     if loan is None:
-        msg = "No active loan for this book"
+        msg = "No active loan for this id"
         raise ValueError(msg)
     if loan.user_id != acting_user_id:
-        msg = "Only the borrower can check in this book"
+        msg = "Only the borrower can check in this loan"
         raise ValueError(msg)
     loan.returned_at = datetime.utcnow()
     session.add(loan)

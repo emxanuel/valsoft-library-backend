@@ -3,52 +3,45 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
-from database.models.clients import Client
+from database.models.book_copies import BookCopy
 from database.models.users import Users
+from features.books import copy_services
 from features.books import services as book_services
 from features.books.schemas import (
+    BookCopyCreate,
+    BookCopyListResponse,
+    BookCopyRead,
+    BookCopyUpdate,
     BookCreate,
     BookListPage,
     BookRead,
     BookUpdate,
 )
 from features.loans import services as loan_services
+from features.loans.controllers import loan_to_read
 from features.loans.schemas import CheckoutRequest, LoanRead
-
-
-def _loan_client_fields(client: Client | None) -> tuple[
-    int | None,
-    str | None,
-    str | None,
-    str | None,
-]:
-    if client is None or client.id is None:
-        return None, None, None, None
-    return (
-        client.id,
-        client.name,
-        client.email,
-        client.phone,
-    )
 
 
 def _to_book_read(
     session: Session,
     book,
     *,
-    open_book_ids: Optional[set[int]] = None,
+    copy_stats: Optional[tuple[int, int]] = None,
 ) -> BookRead:
-    bid = book.id
-    if bid is None:
+    if book.id is None:
         raise RuntimeError("book id missing after persist")
-    if open_book_ids is not None:
-        is_out = bid in open_book_ids
+    book_id = book.id
+    if copy_stats is not None:
+        total, available = copy_stats
     else:
-        is_out = loan_services.book_has_open_loan(session, bid)
+        total = copy_services.count_total_copies(session, book_id)
+        available = copy_services.available_copies_count(session, book_id)
+    is_out = available == 0 and total > 0
     return BookRead(
-        id=bid,
+        id=book_id,
         title=book.title,
         author=book.author,
         isbn=book.isbn,
@@ -58,6 +51,8 @@ def _to_book_read(
         image_url=book.image_url,
         created_at=book.created_at,
         updated_at=book.updated_at,
+        total_copies=total,
+        available_copies=available,
         is_checked_out=is_out,
     )
 
@@ -78,8 +73,15 @@ def list_books_controller(
         limit=limit,
     )
     ids = [b.id for b in books if b.id is not None]
-    open_ids = loan_services.book_ids_with_open_loans(session, ids)
-    items = [_to_book_read(session, b, open_book_ids=open_ids) for b in books]
+    stats_by_book = copy_services.copy_stats_for_book_ids(session, ids)
+    items = [
+        _to_book_read(
+            session,
+            b,
+            copy_stats=stats_by_book.get(b.id, (0, 0)),  # type: ignore[arg-type]
+        )
+        for b in books
+    ]
     return BookListPage(
         items=items,
         total=total,
@@ -144,6 +146,122 @@ def delete_book_controller(book_id: int, session: Session) -> None:
         ) from exc
 
 
+def list_copies_controller(session: Session, book_id: int) -> BookCopyListResponse:
+    book = book_services.get_book_by_id(session, book_id)
+    if book is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Book not found",
+        )
+    copies = copy_services.list_copies_for_book(session, book_id)
+    ids = [c.id for c in copies if c.id is not None]
+    busy = copy_services.copy_ids_with_open_loans(session, ids)
+    items: list[BookCopyRead] = []
+    for c in copies:
+        if c.id is None:
+            continue
+        items.append(
+            BookCopyRead(
+                id=c.id,
+                book_id=c.book_id,
+                barcode=c.barcode,
+                is_checked_out=c.id in busy,
+                created_at=c.created_at,
+                updated_at=c.updated_at,
+            )
+        )
+    return BookCopyListResponse(items=items)
+
+
+def create_copy_controller(
+    book_id: int,
+    payload: BookCopyCreate,
+    session: Session,
+) -> BookCopyRead:
+    book = book_services.get_book_by_id(session, book_id)
+    if book is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Book not found",
+        )
+    try:
+        c = copy_services.create_copy_for_book(
+            session,
+            book_id,
+            barcode=payload.barcode,
+        )
+    except IntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Barcode already in use",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    busy = copy_services.copy_ids_with_open_loans(session, [c.id])  # type: ignore[list-item]
+    return BookCopyRead(
+        id=c.id,  # type: ignore[arg-type]
+        book_id=c.book_id,
+        barcode=c.barcode,
+        is_checked_out=c.id in busy,
+        created_at=c.created_at,
+        updated_at=c.updated_at,
+    )
+
+
+def update_copy_controller(
+    copy_id: int,
+    payload: BookCopyUpdate,
+    session: Session,
+) -> BookCopyRead:
+    c = copy_services.get_copy_by_id(session, copy_id)
+    if c is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Copy not found",
+        )
+    data = payload.model_dump(exclude_unset=True)
+    try:
+        c = copy_services.update_copy(session, c, **data)
+    except IntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Barcode already in use",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    busy = copy_services.copy_has_open_loan(session, c.id)  # type: ignore[arg-type]
+    return BookCopyRead(
+        id=c.id,  # type: ignore[arg-type]
+        book_id=c.book_id,
+        barcode=c.barcode,
+        is_checked_out=busy,
+        created_at=c.created_at,
+        updated_at=c.updated_at,
+    )
+
+
+def delete_copy_controller(copy_id: int, session: Session) -> None:
+    c = copy_services.get_copy_by_id(session, copy_id)
+    if c is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Copy not found",
+        )
+    try:
+        copy_services.soft_delete_copy(session, c)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
 def checkout_controller(
     book_id: int,
     payload: CheckoutRequest,
@@ -159,6 +277,7 @@ def checkout_controller(
             client_email=payload.client.email,
             client_phone=payload.client.phone,
             due_at=payload.due_at,
+            copy_id=payload.copy_id,
         )
     except ValueError as exc:
         detail = str(exc)
@@ -171,62 +290,7 @@ def checkout_controller(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=detail,
         ) from exc
-    lid = loan.id
-    bid = loan.book_id
-    uid = loan.user_id
-    if lid is None or bid is None or uid is None:
-        raise RuntimeError("loan ids missing after persist")
-    cid, cname, cemail, cphone = _loan_client_fields(patron)
-    return LoanRead(
-        id=lid,
-        book_id=bid,
-        user_id=uid,
-        client_id=cid,
-        client_name=cname,
-        client_email=cemail,
-        client_phone=cphone,
-        checked_out_at=loan.checked_out_at,
-        due_at=loan.due_at,
-        returned_at=loan.returned_at,
-    )
-
-
-def checkin_controller(
-    book_id: int,
-    current_user: Users,
-    session: Session,
-) -> LoanRead:
-    try:
-        loan = loan_services.checkin_book(
-            session,
-            book_id=book_id,
-            acting_user_id=current_user.id,  # type: ignore[arg-type]
-        )
-    except ValueError as exc:
-        detail = str(exc)
-        if detail == "No active loan for this book":
-            st = status.HTTP_404_NOT_FOUND
-        elif detail == "Only the borrower can check in this book":
-            st = status.HTTP_403_FORBIDDEN
-        else:
-            st = status.HTTP_400_BAD_REQUEST
-        raise HTTPException(status_code=st, detail=detail) from exc
-    patron = session.get(Client, loan.client_id) if loan.client_id else None
-    lid = loan.id
-    bid = loan.book_id
-    uid = loan.user_id
-    if lid is None or bid is None or uid is None:
-        raise RuntimeError("loan ids missing after persist")
-    cid, cname, cemail, cphone = _loan_client_fields(patron)
-    return LoanRead(
-        id=lid,
-        book_id=bid,
-        user_id=uid,
-        client_id=cid,
-        client_name=cname,
-        client_email=cemail,
-        client_phone=cphone,
-        checked_out_at=loan.checked_out_at,
-        due_at=loan.due_at,
-        returned_at=loan.returned_at,
-    )
+    bc = session.get(BookCopy, loan.copy_id)
+    if bc is None:
+        raise RuntimeError("copy missing after checkout")
+    return loan_to_read(session, loan, patron, bc)

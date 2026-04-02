@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from core.config import get_settings
 
 # Import models so that SQLModel.metadata is fully populated
+import database.models.book_copies  # noqa: F401
 import database.models.books  # noqa: F401
 import database.models.clients  # noqa: F401
 import database.models.loans  # noqa: F401

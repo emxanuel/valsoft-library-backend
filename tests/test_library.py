@@ -44,6 +44,8 @@ def test_books_crud(authenticated_client: TestClient):
     book = create.json()
     book_id = book["id"]
     assert book["title"] == "The Book"
+    assert book["total_copies"] == 1
+    assert book["available_copies"] == 1
     assert book["is_checked_out"] is False
 
     listed = c.get("/library/books").json()
@@ -165,7 +167,7 @@ def test_checkout_second_attempt_fails(authenticated_client: TestClient):
     assert first.status_code == 201
     second = c.post(f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT)
     assert second.status_code == 400
-    assert "already" in second.json()["detail"].lower()
+    assert "copies" in second.json()["detail"].lower()
 
 
 def test_checkout_sets_checked_out_flag(authenticated_client: TestClient):
@@ -190,8 +192,10 @@ def test_checkin_flow(authenticated_client: TestClient):
         json={"title": "Return Me", "author": "A"},
     ).json()["id"]
 
-    c.post(f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT)
-    checkin = c.post(f"/library/books/{book_id}/checkin")
+    loan_id = c.post(
+        f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT
+    ).json()["id"]
+    checkin = c.post(f"/library/loans/{loan_id}/checkin")
     assert checkin.status_code == 200
     assert checkin.json()["returned_at"] is not None
     assert c.get(f"/library/books/{book_id}").json()["is_checked_out"] is False
@@ -208,9 +212,12 @@ def test_list_my_open_loans(authenticated_client: TestClient):
 
     assert c.get("/library/loans").json() == []
 
-    c.post(f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT)
+    loan_id = c.post(
+        f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT
+    ).json()["id"]
     loans = c.get("/library/loans").json()
     assert len(loans) == 1
+    assert loans[0]["loan_id"] == loan_id
     assert loans[0]["book_id"] == book_id
     assert loans[0]["book_title"] == "Loaned Title"
     assert loans[0]["book_author"] == "Loaned Author"
@@ -219,7 +226,7 @@ def test_list_my_open_loans(authenticated_client: TestClient):
     assert loans[0]["client_phone"] == "555-0100"
     assert loans[0]["due_at"] is None
 
-    c.post(f"/library/books/{book_id}/checkin")
+    c.post(f"/library/loans/{loan_id}/checkin")
     assert c.get("/library/loans").json() == []
 
 
@@ -230,7 +237,7 @@ def test_checkin_no_active_loan_returns_404(authenticated_client: TestClient):
         json={"title": "Never Out", "author": "A"},
     ).json()["id"]
 
-    r = c.post(f"/library/books/{book_id}/checkin")
+    r = c.post("/library/loans/999999/checkin")
     assert r.status_code == 404
 
 
@@ -252,8 +259,10 @@ def test_delete_after_checkin_succeeds(authenticated_client: TestClient):
         "/library/books",
         json={"title": "Returned", "author": "A"},
     ).json()["id"]
-    c.post(f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT)
-    c.post(f"/library/books/{book_id}/checkin")
+    loan_id = c.post(
+        f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT
+    ).json()["id"]
+    c.post(f"/library/loans/{loan_id}/checkin")
 
     r = c.delete(f"/library/books/{book_id}")
     assert r.status_code == 204
@@ -269,10 +278,58 @@ def test_non_borrower_cannot_checkin(
         "/library/books",
         json={"title": "Shared", "author": "A"},
     ).json()["id"]
-    borrower.post(f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT)
+    loan_id = borrower.post(
+        f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT
+    ).json()["id"]
 
-    r = other.post(f"/library/books/{book_id}/checkin")
+    r = other.post(f"/library/loans/{loan_id}/checkin")
     assert r.status_code == 403
+
+
+def test_two_copies_allow_two_concurrent_checkouts(
+    authenticated_client_factory: Callable[..., TestClient],
+):
+    u1 = authenticated_client_factory(email="a1@example.com")
+    u2 = authenticated_client_factory(email="a2@example.com")
+    book_id = u1.post(
+        "/library/books",
+        json={"title": "Multi", "author": "A"},
+    ).json()["id"]
+    assert u1.post(f"/library/books/{book_id}/copies", json={}).status_code == 201
+
+    detail = u1.get(f"/library/books/{book_id}").json()
+    assert detail["total_copies"] == 2
+    assert detail["available_copies"] == 2
+
+    out1 = u1.post(f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT)
+    out2 = u2.post(f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT)
+    assert out1.status_code == 201
+    assert out1.json()["copy_id"] != out2.json()["copy_id"]
+    assert out2.status_code == 201
+
+    detail2 = u1.get(f"/library/books/{book_id}").json()
+    assert detail2["available_copies"] == 0
+    assert detail2["is_checked_out"] is True
+
+
+def test_copy_barcode_must_be_unique(authenticated_client: TestClient):
+    c = authenticated_client
+    book_id = c.post(
+        "/library/books",
+        json={"title": "Bar", "author": "A"},
+    ).json()["id"]
+    assert (
+        c.post(
+            f"/library/books/{book_id}/copies",
+            json={"barcode": "X-123"},
+        ).status_code
+        == 201
+    )
+    dup = c.post(
+        f"/library/books/{book_id}/copies",
+        json={"barcode": "X-123"},
+    )
+    assert dup.status_code == 400
 
 
 def test_second_user_cannot_checkout_while_borrowed(
@@ -372,7 +429,9 @@ def test_delete_client_blocked_when_loan_exists(authenticated_client: TestClient
         "/library/books",
         json={"title": "Tied", "author": "A"},
     ).json()["id"]
-    c.post(f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT)
+    loan_id = c.post(
+        f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT
+    ).json()["id"]
     page = c.get("/library/clients").json()
     assert page["total"] == 1
     patron_id = page["items"][0]["id"]
@@ -381,7 +440,7 @@ def test_delete_client_blocked_when_loan_exists(authenticated_client: TestClient
     assert r.status_code == 400
     assert "loan" in r.json()["detail"].lower()
 
-    c.post(f"/library/books/{book_id}/checkin")
+    c.post(f"/library/loans/{loan_id}/checkin")
     r2 = c.delete(f"/library/clients/{patron_id}")
     assert r2.status_code == 400
     assert "loan" in r2.json()["detail"].lower()
