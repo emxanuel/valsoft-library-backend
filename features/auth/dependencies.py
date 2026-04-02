@@ -21,7 +21,7 @@ def get_current_user(
             detail="Not authenticated",
         )
 
-    user_id = get_user_id_from_session(session_id)
+    user_id = get_user_id_from_session(session, session_id)
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

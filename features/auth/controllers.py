@@ -39,7 +39,7 @@ def login_controller(payload: LoginRequest, session: Session) -> Tuple[LoginResp
             detail="Invalid email or password",
         )
 
-    session_id = create_session(user.id)  # type: ignore[arg-type]
+    session_id = create_session(session, user.id)
     user_read = UserRead.model_validate(user, from_attributes=True)
     login_response = LoginResponse(user=user_read)
     return login_response, session_id

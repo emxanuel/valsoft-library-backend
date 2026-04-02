@@ -61,10 +61,11 @@ def read_current_user(
 )
 def logout(
     response: Response,
+    session: Session = Depends(get_session),
     session_id: str | None = Cookie(default=None),
 ) -> None:
     if session_id is not None:
-        invalidate_session(session_id)
+        invalidate_session(session, session_id)
         response.delete_cookie(
             key="session_id",
             httponly=True,
