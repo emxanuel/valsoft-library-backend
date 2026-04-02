@@ -14,8 +14,20 @@ from features.admin.controllers import (
 )
 from features.admin.schemas import EmployeeCreate, EmployeeUpdate, StaffListPage, StaffRead
 from features.auth.dependencies import get_current_admin
+from features.loans.controllers import list_admin_open_loans_controller
+from features.loans.schemas import AdminOpenLoansPage
 
 admin_router = APIRouter(tags=["admin"])
+
+
+@admin_router.get("/loans", response_model=AdminOpenLoansPage)
+def list_all_open_loans(
+    session: Session = Depends(get_session),
+    _: Users = Depends(get_current_admin),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+) -> AdminOpenLoansPage:
+    return list_admin_open_loans_controller(session, offset=offset, limit=limit)
 
 
 @admin_router.get("/employees", response_model=StaffListPage)

@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 _EMPTY_PAGE = {"items": [], "total": 0, "limit": 20, "offset": 0}
 _EMPTY_CLIENTS_PAGE = {"items": [], "total": 0, "limit": 20, "offset": 0}
+_EMPTY_LOAN_HISTORY_PAGE = {"items": [], "total": 0, "limit": 20, "offset": 0}
 
 _CHECKOUT_CLIENT = {
     "client": {
@@ -23,6 +24,7 @@ def test_library_requires_auth(client: TestClient):
     assert client.get("/library/clients/1").status_code == 401
     assert client.patch("/library/clients/1", json={"name": "B"}).status_code == 401
     assert client.delete("/library/clients/1").status_code == 401
+    assert client.get("/library/loans/history").status_code == 401
 
 
 def test_books_crud(authenticated_client: TestClient):
@@ -444,3 +446,116 @@ def test_delete_client_blocked_when_loan_exists(authenticated_client: TestClient
     r2 = c.delete(f"/library/clients/{patron_id}")
     assert r2.status_code == 400
     assert "loan" in r2.json()["detail"].lower()
+
+
+def test_staff_loan_history_empty(authenticated_client: TestClient):
+    c = authenticated_client
+    assert c.get("/library/loans/history").json() == _EMPTY_LOAN_HISTORY_PAGE
+
+
+def test_staff_loan_history_after_checkin(authenticated_client: TestClient):
+    c = authenticated_client
+    book_id = c.post(
+        "/library/books",
+        json={"title": "Hist Book", "author": "A"},
+    ).json()["id"]
+    loan_id = c.post(
+        f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT
+    ).json()["id"]
+    assert c.get("/library/loans/history").json()["total"] == 0
+    c.post(f"/library/loans/{loan_id}/checkin")
+    page = c.get("/library/loans/history").json()
+    assert page["total"] == 1
+    assert page["items"][0]["loan_id"] == loan_id
+    assert page["items"][0]["returned_at"] is not None
+    assert page["items"][0]["book_title"] == "Hist Book"
+
+
+def test_staff_loan_history_pagination(authenticated_client: TestClient):
+    c = authenticated_client
+    loan_ids: list[int] = []
+    for i in range(3):
+        book_id = c.post(
+            "/library/books",
+            json={"title": f"P{i}", "author": "A"},
+        ).json()["id"]
+        loan_id = c.post(
+            f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT
+        ).json()["id"]
+        c.post(f"/library/loans/{loan_id}/checkin")
+        loan_ids.append(loan_id)
+    total = c.get("/library/loans/history").json()["total"]
+    assert total == 3
+    page1 = c.get("/library/loans/history", params={"limit": 2, "offset": 0}).json()
+    assert page1["total"] == 3
+    assert len(page1["items"]) == 2
+    page2 = c.get("/library/loans/history", params={"limit": 2, "offset": 2}).json()
+    assert len(page2["items"]) == 1
+
+
+def test_client_loan_history_requires_valid_client(authenticated_client: TestClient):
+    c = authenticated_client
+    assert c.get("/library/loans/history", params={"client_id": 999999}).status_code == 404
+
+
+def test_client_loan_history_open_and_returned(authenticated_client: TestClient):
+    c = authenticated_client
+    book_id = c.post(
+        "/library/books",
+        json={"title": "Open And Done", "author": "A"},
+    ).json()["id"]
+    loan_open = c.post(
+        f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT
+    ).json()["id"]
+    patron_id = c.get("/library/clients").json()["items"][0]["id"]
+
+    book2_id = c.post(
+        "/library/books",
+        json={"title": "Returned Only", "author": "B"},
+    ).json()["id"]
+    loan_done = c.post(
+        f"/library/books/{book2_id}/checkout", json=_CHECKOUT_CLIENT
+    ).json()["id"]
+    c.post(f"/library/loans/{loan_done}/checkin")
+
+    page = c.get(
+        "/library/loans/history",
+        params={"client_id": patron_id},
+    ).json()
+    assert page["total"] == 2
+    by_loan = {row["loan_id"]: row for row in page["items"]}
+    assert by_loan[loan_open]["returned_at"] is None
+    assert by_loan[loan_open]["staff_email"] == "user@example.com"
+    assert by_loan[loan_done]["returned_at"] is not None
+    assert by_loan[loan_done]["staff_email"] == "user@example.com"
+
+
+def test_two_staff_same_patron_client_history(
+    authenticated_client_factory: Callable[..., TestClient],
+):
+    u1 = authenticated_client_factory(email="s1@example.com")
+    u2 = authenticated_client_factory(email="s2@example.com")
+
+    b1 = u1.post(
+        "/library/books",
+        json={"title": "B1", "author": "A"},
+    ).json()["id"]
+    u1.post(f"/library/books/{b1}/checkout", json=_CHECKOUT_CLIENT)
+    patron_id = u1.get("/library/clients").json()["items"][0]["id"]
+
+    b2 = u2.post(
+        "/library/books",
+        json={"title": "B2", "author": "A"},
+    ).json()["id"]
+    u2.post(f"/library/books/{b2}/checkout", json=_CHECKOUT_CLIENT)
+
+    page = u1.get(
+        "/library/loans/history",
+        params={"client_id": patron_id},
+    ).json()
+    assert page["total"] == 2
+    emails = {row["staff_email"] for row in page["items"]}
+    assert emails == {"s1@example.com", "s2@example.com"}
+
+    assert u1.get("/library/loans/history").json()["total"] == 0
+    assert u2.get("/library/loans/history").json()["total"] == 0

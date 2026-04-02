@@ -43,6 +43,7 @@ Implemented in [`features/admin/`](features/admin/). Requires an authenticated *
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET` | `/admin/loans` | All open loans across the library; `offset`, `limit` (default 20, max 100). JSON: `items` (book + patron fields plus `staff_user_id`, `staff_email`, `staff_first_name`, `staff_last_name`), `total`, `limit`, `offset` |
 | `GET` | `/admin/employees` | Paginated staff list; optional `q`; `offset`, `limit` (default 20, max 100) |
 | `POST` | `/admin/employees` | Create an **employee** (name, email, password) |
 | `GET` | `/admin/employees/{id}` | Get one user |
