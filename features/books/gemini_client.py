@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 import json
+import logging
+import random
 import re
-from typing import Any
+import threading
+import time
+from typing import Any, Callable
 
 import httpx
+
+from core.config import get_settings
+
+logger = logging.getLogger(__name__)
+
+_gemini_serialize_lock = threading.Lock()
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -54,6 +64,31 @@ def _response_text(data: dict[str, Any]) -> str:
     return out
 
 
+def _retry_delay_seconds(
+    response: httpx.Response | None,
+    *,
+    attempt_index: int,
+    backoff_base: float,
+    backoff_max: float,
+) -> float:
+    if response is not None:
+        ra = response.headers.get("Retry-After")
+        if ra is not None:
+            try:
+                return min(backoff_max, float(ra.strip()))
+            except ValueError:
+                pass
+    exp = min(backoff_max, backoff_base * (2**attempt_index))
+    jitter = random.uniform(0.0, min(1.0, backoff_base * 0.5))
+    return min(backoff_max, exp + jitter)
+
+
+def _http_status_retryable(status_code: int) -> bool:
+    if status_code == 429:
+        return True
+    return status_code in (500, 502, 503, 504)
+
+
 def gemini_generate_content_json(
     *,
     api_key: str,
@@ -63,6 +98,7 @@ def gemini_generate_content_json(
     user_text: str,
     temperature: float = 0.0,
     timeout_seconds: float = 180.0,
+    on_retry: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """
     POST to Gemini generateContent and parse the model text as JSON.
@@ -70,8 +106,17 @@ def gemini_generate_content_json(
     ``base_url`` is the API root, e.g. ``https://generativelanguage.googleapis.com/v1beta``.
     ``model`` is the id only, e.g. ``gemini-2.0-flash`` (no ``models/`` prefix).
 
-    Raises httpx.HTTPError on transport errors; ValueError on bad JSON.
+    Retries transient HTTP statuses (429, 5xx) with backoff. Optional ``on_retry`` runs
+    before each wait when a retry will occur.
+
+    Raises httpx.HTTPError on non-retryable HTTP errors; ValueError on bad JSON.
     """
+    settings = get_settings()
+    max_retries = settings.GEMINI_MAX_RETRIES
+    backoff_base = settings.GEMINI_RETRY_BACKOFF_BASE_SECONDS
+    backoff_max = settings.GEMINI_RETRY_BACKOFF_MAX_SECONDS
+    serialize = settings.GEMINI_SERIALIZE_REQUESTS
+
     base = base_url.rstrip("/")
     url = f"{base}/models/{model}:generateContent"
     params = {"key": api_key}
@@ -89,10 +134,42 @@ def gemini_generate_content_json(
     }
     connect = min(30.0, max(5.0, timeout_seconds / 6))
     timeout = httpx.Timeout(timeout_seconds, connect=connect)
-    with httpx.Client(timeout=timeout) as client:
-        response = client.post(url, params=params, json=body)
-        response.raise_for_status()
-        data = response.json()
 
-    text = _response_text(data)
-    return _extract_json_object(text)
+    for attempt in range(max_retries + 1):
+        try:
+            def do_post() -> httpx.Response:
+                with httpx.Client(timeout=timeout) as client:
+                    return client.post(url, params=params, json=body)
+
+            if serialize:
+                with _gemini_serialize_lock:
+                    response = do_post()
+            else:
+                response = do_post()
+
+            response.raise_for_status()
+            data = response.json()
+            text = _response_text(data)
+            return _extract_json_object(text)
+
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if attempt < max_retries and _http_status_retryable(status):
+                delay = _retry_delay_seconds(
+                    exc.response,
+                    attempt_index=attempt,
+                    backoff_base=backoff_base,
+                    backoff_max=backoff_max,
+                )
+                logger.warning(
+                    "gemini_http_retryable status=%s attempt=%s/%s sleep=%.2fs",
+                    status,
+                    attempt + 1,
+                    max_retries + 1,
+                    delay,
+                )
+                if on_retry:
+                    on_retry()
+                time.sleep(delay)
+                continue
+            raise

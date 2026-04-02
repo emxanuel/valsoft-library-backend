@@ -1,6 +1,8 @@
-"""Tests for POST /library/books/ai/enrich (Gemini mocked)."""
+"""Tests for POST /library/books/ai/enrich and WS /library/books/ai/enrich/stream (Gemini mocked)."""
 
 from __future__ import annotations
+
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -243,3 +245,42 @@ def test_ai_enrich_503_when_gemini_not_configured(
         assert "not configured" in str(detail).lower()
     finally:
         get_settings.cache_clear()
+
+
+def test_ai_enrich_ws_requires_auth(client: TestClient) -> None:
+    with client.websocket_connect("/library/books/ai/enrich/stream") as ws:
+        msg = ws.receive_json()
+    assert msg["type"] == "error"
+    assert "authenticated" in msg["detail"].lower()
+
+
+def test_ai_enrich_ws_returns_progress_and_result(
+    authenticated_client: TestClient,
+    gemini_configured: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ai_services, "gemini_generate_content_json", _fake_gemini)
+    cookies = dict(authenticated_client.cookies)
+    with authenticated_client.websocket_connect(
+        "/library/books/ai/enrich/stream",
+        cookies=cookies,
+    ) as ws:
+        ws.send_text(json.dumps({"title": "T", "author": "A"}))
+        progress_steps: list[str] = []
+        result = None
+        while True:
+            msg = ws.receive_json()
+            if msg["type"] == "progress":
+                progress_steps.append(msg["step"])
+            elif msg["type"] == "result":
+                result = msg["data"]
+                break
+            elif msg["type"] == "error":
+                pytest.fail(msg.get("detail", str(msg)))
+            else:
+                pytest.fail(str(msg))
+        assert "starting" in progress_steps
+        assert "duplicate_check" in progress_steps
+        assert "gemini" in progress_steps
+        assert result is not None
+        assert result["suggestions"]["genre"] == "Science Fiction"

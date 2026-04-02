@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
     # Max seconds to wait for Gemini generateContent (read); slow models/network need more.
     GEMINI_HTTP_TIMEOUT_SECONDS: float = 180.0
+    # Retries for transient HTTP errors (429, 5xx). First attempt + up to this many retries.
+    GEMINI_MAX_RETRIES: int = 5
+    GEMINI_RETRY_BACKOFF_BASE_SECONDS: float = 1.0
+    GEMINI_RETRY_BACKOFF_MAX_SECONDS: float = 60.0
+    # Serialize Gemini HTTP calls per process (reduces concurrent rate-limit pressure).
+    GEMINI_SERIALIZE_REQUESTS: bool = True
     OPEN_LIBRARY_BASE_URL: str = "https://openlibrary.org"
     # Open Library HTTP timeout for ISBN lookup before AI enrichment (seconds).
     ISBN_LOOKUP_TIMEOUT_SECONDS: float = 12.0
@@ -57,6 +63,20 @@ class Settings(BaseSettings):
     def validate_gemini_timeout(cls, v: float) -> float:
         if v < 30.0 or v > 600.0:
             raise ValueError("GEMINI_HTTP_TIMEOUT_SECONDS must be between 30 and 600")
+        return v
+
+    @field_validator("GEMINI_MAX_RETRIES")
+    @classmethod
+    def validate_gemini_max_retries(cls, v: int) -> int:
+        if v < 0 or v > 20:
+            raise ValueError("GEMINI_MAX_RETRIES must be between 0 and 20")
+        return v
+
+    @field_validator("GEMINI_RETRY_BACKOFF_BASE_SECONDS", "GEMINI_RETRY_BACKOFF_MAX_SECONDS")
+    @classmethod
+    def validate_gemini_backoff(cls, v: float) -> float:
+        if v < 0.1 or v > 300.0:
+            raise ValueError("Gemini backoff seconds must be between 0.1 and 300")
         return v
 
     @field_validator("ISBN_LOOKUP_TIMEOUT_SECONDS")

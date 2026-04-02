@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import Cookie, Depends, HTTPException, Request, status
+from fastapi import Cookie, Depends, HTTPException, Request, WebSocket, status
 from sqlmodel import Session
 
 from database.models.users import UserRole, Users
@@ -36,6 +36,26 @@ def get_current_user(
         )
 
     request.state.user_id = user.id
+    return user
+
+
+def get_websocket_user(
+    websocket: WebSocket,
+    session: Session,
+) -> Users:
+    """Resolve the logged-in user from WebSocket cookies (same rules as ``get_current_user``)."""
+    session_id = websocket.cookies.get("session_id")
+    if session_id is None:
+        raise ValueError("Not authenticated")
+
+    user_id = get_user_id_from_session(session, session_id)
+    if user_id is None:
+        raise ValueError("Session expired or invalid")
+
+    user = services.get_user_by_id(session, user_id)
+    if user is None:
+        raise ValueError("User not found")
+
     return user
 
 

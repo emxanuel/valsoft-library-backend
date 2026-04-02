@@ -189,12 +189,18 @@ def enrich_book_metadata(
     *,
     gemini_call: Optional[Callable[..., dict[str, Any]]] = None,
     isbn_lookup: Optional[Callable[[str], Optional[IsbnLookupResult]]] = None,
+    on_progress: Optional[Callable[[str, Optional[str]], None]] = None,
 ) -> BookAiEnrichResponse:
     """
     Return AI suggestions plus duplicate candidates.
 
     `gemini_call` is injectable for tests (defaults to gemini_generate_content_json).
+    Optional `on_progress(step, message)` reports coarse pipeline steps for streaming UIs.
     """
+    def _emit(step: str, message: Optional[str] = None) -> None:
+        if on_progress is not None:
+            on_progress(step, message)
+
     settings = get_settings()
     if not settings.GEMINI_API_KEY or not str(settings.GEMINI_API_KEY).strip():
         msg = "GEMINI_API_KEY is not configured"
@@ -203,13 +209,17 @@ def enrich_book_metadata(
         msg = "GEMINI_MODEL is not configured"
         raise ValueError(msg)
 
+    _emit("starting", "Preparing enrichment…")
+
     lookup: Optional[IsbnLookupResult] = None
     isbn_stripped = (req.isbn or "").strip()
     lookup_fn = isbn_lookup or fetch_open_library_by_isbn
     if isbn_stripped:
+        _emit("isbn_lookup", "Looking up ISBN…")
         lookup = lookup_fn(isbn_stripped)
 
     merged_req = _merge_req_with_lookup(req, lookup)
+    _emit("duplicate_check", "Checking catalog for similar titles…")
     duplicate_candidates = find_duplicate_candidates(session, merged_req)
     requires_confirmation = len(duplicate_candidates) > 0
 
@@ -261,15 +271,22 @@ def enrich_book_metadata(
 
     call = gemini_call or gemini_generate_content_json
     try:
-        raw = call(
-            api_key=settings.GEMINI_API_KEY.strip(),
-            model=settings.GEMINI_MODEL.strip(),
-            base_url=settings.GEMINI_BASE_URL,
-            system_instruction=system,
-            user_text=user,
-            temperature=0.0,
-            timeout_seconds=settings.GEMINI_HTTP_TIMEOUT_SECONDS,
-        )
+        _emit("gemini", "Requesting AI suggestions…")
+        call_kwargs: dict[str, Any] = {
+            "api_key": settings.GEMINI_API_KEY.strip(),
+            "model": settings.GEMINI_MODEL.strip(),
+            "base_url": settings.GEMINI_BASE_URL,
+            "system_instruction": system,
+            "user_text": user,
+            "temperature": 0.0,
+            "timeout_seconds": settings.GEMINI_HTTP_TIMEOUT_SECONDS,
+        }
+        if on_progress is not None:
+            call_kwargs["on_retry"] = lambda: _emit(
+                "gemini_retry",
+                "Retrying after a temporary API error…",
+            )
+        raw = call(**call_kwargs)
     except Exception as exc:
         logger.exception("gemini_book_enrich_failed")
         msg = f"AI enrichment failed: {exc}"
