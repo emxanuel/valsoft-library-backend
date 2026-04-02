@@ -75,12 +75,12 @@ def _retry_delay_seconds(
         ra = response.headers.get("Retry-After")
         if ra is not None:
             try:
-                return min(backoff_max, float(ra.strip()))
+                return float(min(backoff_max, float(ra.strip())))
             except ValueError:
                 pass
     exp = min(backoff_max, backoff_base * (2**attempt_index))
     jitter = random.uniform(0.0, min(1.0, backoff_base * 0.5))
-    return min(backoff_max, exp + jitter)
+    return float(min(backoff_max, exp + jitter))
 
 
 def _http_status_retryable(status_code: int) -> bool:
@@ -173,3 +173,4 @@ def gemini_generate_content_json(
                 time.sleep(delay)
                 continue
             raise
+    raise RuntimeError("unexpected end of gemini retry loop")

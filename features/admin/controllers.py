@@ -93,6 +93,11 @@ def delete_staff_controller(
     user_id: int,
     acting_user: Users,
 ) -> None:
+    if acting_user.id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Session user is missing an id",
+        )
     try:
         admin_services.delete_staff(
             session, user_id=user_id, acting_user_id=acting_user.id
