@@ -214,12 +214,13 @@ def checkin_loan(
     *,
     loan_id: int,
     acting_user_id: int,
+    acting_user_is_admin: bool = False,
 ) -> Loan:
     loan = get_open_loan_by_id(session, loan_id)
     if loan is None:
         msg = "No active loan for this id"
         raise ValueError(msg)
-    if loan.user_id != acting_user_id:
+    if loan.user_id != acting_user_id and not acting_user_is_admin:
         msg = "Only the borrower can check in this loan"
         raise ValueError(msg)
     loan.returned_at = datetime.utcnow()

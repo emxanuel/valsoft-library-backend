@@ -1,6 +1,10 @@
 from collections.abc import Callable
 
 from fastapi.testclient import TestClient
+from sqlmodel import Session
+
+from database.models.users import UserRole
+from tests.conftest import create_staff_in_db, login_user
 
 _EMPTY_PAGE = {"items": [], "total": 0, "limit": 20, "offset": 0}
 _EMPTY_CLIENTS_PAGE = {"items": [], "total": 0, "limit": 20, "offset": 0}
@@ -286,6 +290,37 @@ def test_non_borrower_cannot_checkin(
 
     r = other.post(f"/library/loans/{loan_id}/checkin")
     assert r.status_code == 403
+
+
+def test_admin_can_checkin_other_staff_loan(client: TestClient, db_session: Session):
+    create_staff_in_db(
+        db_session,
+        email="emp@example.com",
+        password="password123",
+        first_name="Em",
+        last_name="Ploy",
+        role=UserRole.EMPLOYEE,
+    )
+    create_staff_in_db(
+        db_session,
+        email="admin@example.com",
+        password="password123",
+        first_name="Ad",
+        last_name="Min",
+        role=UserRole.ADMIN,
+    )
+    login_user(client, "emp@example.com", "password123")
+    book_id = client.post(
+        "/library/books",
+        json={"title": "Admin checkin", "author": "A"},
+    ).json()["id"]
+    loan_id = client.post(
+        f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT
+    ).json()["id"]
+    login_user(client, "admin@example.com", "password123")
+    r = client.post(f"/library/loans/{loan_id}/checkin")
+    assert r.status_code == 200
+    assert r.json()["returned_at"] is not None
 
 
 def test_two_copies_allow_two_concurrent_checkouts(

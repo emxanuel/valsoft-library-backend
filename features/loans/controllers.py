@@ -9,7 +9,7 @@ from database.models.book_copies import BookCopy
 from database.models.books import Book
 from database.models.clients import Client
 from database.models.loans import Loan
-from database.models.users import Users
+from database.models.users import UserRole, Users
 from features.clients import services as client_services
 from features.loans import services as loan_services
 from features.loans.schemas import (
@@ -258,6 +258,7 @@ def checkin_loan_controller(
             session,
             loan_id=loan_id,
             acting_user_id=current_user.id,  # type: ignore[arg-type]
+            acting_user_is_admin=current_user.role == UserRole.ADMIN,
         )
     except ValueError as exc:
         detail = str(exc)
