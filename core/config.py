@@ -29,12 +29,41 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: str = "https://valsoft-library-frontend.vercel.app"
     METRICS_ENABLED: bool = False
     SENTRY_DSN: str | None = None
+    GEMINI_API_KEY: str | None = None
+    GEMINI_MODEL: str | None = None
+    GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
+    # Max seconds to wait for Gemini generateContent (read); slow models/network need more.
+    GEMINI_HTTP_TIMEOUT_SECONDS: float = 180.0
+    OPEN_LIBRARY_BASE_URL: str = "https://openlibrary.org"
+    # Open Library HTTP timeout for ISBN lookup before AI enrichment (seconds).
+    ISBN_LOOKUP_TIMEOUT_SECONDS: float = 12.0
 
     @field_validator("SENTRY_DSN", mode="before")
     @classmethod
     def empty_sentry_dsn(cls, v: str | None) -> str | None:
         if v is None or (isinstance(v, str) and not v.strip()):
             return None
+        return v
+
+    @field_validator("GEMINI_API_KEY", "GEMINI_MODEL", mode="before")
+    @classmethod
+    def empty_gemini_optional(cls, v: str | None) -> str | None:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
+
+    @field_validator("GEMINI_HTTP_TIMEOUT_SECONDS")
+    @classmethod
+    def validate_gemini_timeout(cls, v: float) -> float:
+        if v < 30.0 or v > 600.0:
+            raise ValueError("GEMINI_HTTP_TIMEOUT_SECONDS must be between 30 and 600")
+        return v
+
+    @field_validator("ISBN_LOOKUP_TIMEOUT_SECONDS")
+    @classmethod
+    def validate_isbn_lookup_timeout(cls, v: float) -> float:
+        if v < 1.0 or v > 60.0:
+            raise ValueError("ISBN_LOOKUP_TIMEOUT_SECONDS must be between 1 and 60")
         return v
 
     @field_validator("LOG_LEVEL")

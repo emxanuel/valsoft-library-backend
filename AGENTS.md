@@ -58,6 +58,7 @@ Implemented across [`features/books/`](features/books/) (catalog and checkout/ch
 |--------|------|-------------|
 | `GET` | `/library/books` | Paginated list; optional `q`, `genre`; `offset` (default 0), `limit` (default 20, max 100). JSON: `items`, `total`, `limit`, `offset` |
 | `POST` | `/library/books` | Create a book |
+| `POST` | `/library/books/ai/enrich` | AI-assisted metadata **suggestions** (Gemini); body: `title`, `author`, optional fields, optional `exclude_book_id` when editing. Returns `suggestions`, `duplicate_candidates`, `requires_confirmation`. Requires `GEMINI_API_KEY` and `GEMINI_MODEL`. |
 | `GET` | `/library/books/{book_id}` | Get one book (`is_checked_out` reflects active loan) |
 | `PATCH` | `/library/books/{book_id}` | Update a book |
 | `DELETE` | `/library/books/{book_id}` | Soft delete: sets `deleted_at` (row kept); fails if the book is checked out. Loan history is not removed. |
@@ -73,6 +74,12 @@ Implemented across [`features/books/`](features/books/) (catalog and checkout/ch
 Circulation is stored in the `loan` table; **checked out** means an open loan (`returned_at` is null). **Checked in** sets `returned_at`. Patron contact info lives in the `client` table; each new checkout links the loan via `client_id` (nullable for legacy rows). The loan’s `user_id` is the staff account that performed checkout/check-in.
 
 List and get endpoints only return books with `deleted_at` null. ISBN uniqueness applies to active (non-deleted) rows only, so a new book can reuse an ISBN after the previous copy was soft-deleted.
+
+## AI catalog enrichment (optional)
+
+- Set `GEMINI_API_KEY` and `GEMINI_MODEL` in `.env` for `POST /library/books/ai/enrich`.
+- Optional: `GEMINI_BASE_URL` (default `https://generativelanguage.googleapis.com/v1beta`).
+- Optional: `GEMINI_HTTP_TIMEOUT_SECONDS` (default `180`; max wait for Gemini response, 30–600).
 
 ## Database
 

@@ -10,7 +10,10 @@ from database.models.book_copies import BookCopy
 from database.models.users import Users
 from features.books import copy_services
 from features.books import services as book_services
+from features.books.ai_services import enrich_book_metadata
 from features.books.schemas import (
+    BookAiEnrichRequest,
+    BookAiEnrichResponse,
     BookCopyCreate,
     BookCopyListResponse,
     BookCopyRead,
@@ -112,6 +115,25 @@ def create_book_controller(payload: BookCreate, session: Session) -> BookRead:
         image_url=payload.image_url,
     )
     return _to_book_read(session, book)
+
+
+def enrich_book_ai_controller(
+    payload: BookAiEnrichRequest,
+    session: Session,
+) -> BookAiEnrichResponse:
+    try:
+        return enrich_book_metadata(session, payload)
+    except ValueError as exc:
+        msg = str(exc)
+        if "not configured" in msg:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=msg,
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=msg,
+        ) from exc
 
 
 def update_book_controller(

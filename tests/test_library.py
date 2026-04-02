@@ -22,6 +22,7 @@ _CHECKOUT_CLIENT = {
 def test_library_requires_auth(client: TestClient):
     response = client.get("/library/books")
     assert response.status_code == 401
+    assert client.post("/library/books/ai/enrich", json={"title": "T", "author": "A"}).status_code == 401
     assert client.get("/library/loans").status_code == 401
     assert client.get("/library/clients").status_code == 401
     assert client.post("/library/clients", json={"name": "A", "email": "a@a.com"}).status_code == 401

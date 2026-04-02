@@ -12,6 +12,7 @@ from features.books.controllers import (
     create_copy_controller,
     delete_book_controller,
     delete_copy_controller,
+    enrich_book_ai_controller,
     get_book_controller,
     list_books_controller,
     list_copies_controller,
@@ -19,6 +20,8 @@ from features.books.controllers import (
     update_copy_controller,
 )
 from features.books.schemas import (
+    BookAiEnrichRequest,
+    BookAiEnrichResponse,
     BookCopyCreate,
     BookCopyListResponse,
     BookCopyRead,
@@ -68,6 +71,14 @@ def create_book(
     session: Session = Depends(get_session),
 ) -> BookRead:
     return create_book_controller(payload, session)
+
+
+@books_router.post("/books/ai/enrich", response_model=BookAiEnrichResponse)
+def enrich_book_ai(
+    payload: BookAiEnrichRequest,
+    session: Session = Depends(get_session),
+) -> BookAiEnrichResponse:
+    return enrich_book_ai_controller(payload, session)
 
 
 @books_router.get("/books/{book_id}", response_model=BookRead)
