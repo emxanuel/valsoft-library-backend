@@ -25,7 +25,7 @@ def register_controller(payload: RegisterRequest, session: Session) -> UserRead:
         session=session,
         first_name=payload.first_name,
         last_name=payload.last_name,
-        email=payload.email,
+        email=str(payload.email),
         password=payload.password,
     )
     return UserRead.model_validate(user, from_attributes=True)

@@ -1,6 +1,12 @@
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel, EmailStr, Field
+
+
+class UserRoleSchema(str, Enum):
+    admin = "admin"
+    employee = "employee"
 
 
 class RegisterRequest(BaseModel):
@@ -16,9 +22,11 @@ class LoginRequest(BaseModel):
 
 
 class UserRead(BaseModel):
+    id: int
     first_name: str
     last_name: str
     email: EmailStr
+    role: UserRoleSchema
     created_at: datetime
     updated_at: datetime
 

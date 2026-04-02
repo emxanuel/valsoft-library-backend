@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from fastapi import Cookie, Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
-from database.models.users import Users
+from database.models.users import UserRole, Users
 from database.session import get_session
 from features.auth.schemas import UserRead
 from features.auth import services
@@ -11,6 +11,7 @@ from features.auth.session import get_user_id_from_session
 
 
 def get_current_user(
+    request: Request,
     session_id: str | None = Cookie(default=None),
     session: Session = Depends(get_session),
 ) -> Users:
@@ -34,6 +35,7 @@ def get_current_user(
             detail="User not found",
         )
 
+    request.state.user_id = user.id
     return user
 
 
@@ -41,4 +43,15 @@ def get_current_user_read(
     user: Users = Depends(get_current_user),
 ) -> UserRead:
     return UserRead.model_validate(user, from_attributes=True)
+
+
+def get_current_admin(
+    user: Users = Depends(get_current_user),
+) -> Users:
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin only",
+        )
+    return user
 

@@ -1,7 +1,7 @@
 from enum import Enum
 from functools import lru_cache
 
-from pydantic import AnyHttpUrl, PositiveFloat, conint, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     PORT: int = 8000
     DEBUG: bool = False
     ALLOWED_ORIGINS: str = "https://valsoft-library-frontend.vercel.app"
+    METRICS_ENABLED: bool = False
+    SENTRY_DSN: str | None = None
+
+    @field_validator("SENTRY_DSN", mode="before")
+    @classmethod
+    def empty_sentry_dsn(cls, v: str | None) -> str | None:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return v
 
     @field_validator("LOG_LEVEL")
     @classmethod

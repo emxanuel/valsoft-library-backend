@@ -14,6 +14,8 @@ def test_register_returns_user_read(client: TestClient):
     assert data["email"] == "new@example.com"
     assert data["first_name"] == "New"
     assert data["last_name"] == "User"
+    assert data["role"] == "employee"
+    assert "id" in data
     assert "created_at" in data
     assert "updated_at" in data
 

@@ -21,8 +21,9 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from core.create_app import create_app
-from database.models import Book, Client, Loan, Users  # noqa: F401
+from database.models import Book, Client, Loan, Users, UserRole  # noqa: F401
 from database.session import get_session
+from features.auth.services import create_user
 
 # Register models on metadata for create_all
 _ = (Book, Client, Loan, Users)
@@ -94,6 +95,12 @@ def clear_in_memory_sessions():
     auth_session._SESSIONS.clear()
 
 
+@pytest.fixture(autouse=True)
+def reset_settings_cache():
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.fixture
 def client(db_session: Session):
     app = create_app()
@@ -135,6 +142,38 @@ def login_user(client: TestClient, email: str, password: str) -> dict:
     )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def create_staff_in_db(
+    session: Session,
+    *,
+    email: str = "admin@example.com",
+    password: str = "password123",
+    first_name: str = "Admin",
+    last_name: str = "User",
+    role: UserRole = UserRole.EMPLOYEE,
+) -> Users:
+    """Create a user row directly via the same service as the app (hashed password)."""
+    return create_user(
+        session,
+        first_name,
+        last_name,
+        email,
+        password,
+        role=role,
+    )
+
+
+@pytest.fixture
+def admin_client(client: TestClient, db_session: Session):
+    create_staff_in_db(
+        db_session,
+        email="admin@example.com",
+        password="password123",
+        role=UserRole.ADMIN,
+    )
+    login_user(client, "admin@example.com", "password123")
+    return client
 
 
 @pytest.fixture

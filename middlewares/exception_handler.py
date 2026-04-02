@@ -41,6 +41,8 @@ async def handle_exception(request: Request, exc: Exception) -> JSONResponse:
         "method": request.method,
         "url": str(request.url),
         "client": request.client.host if request.client else "unknown",
+        "request_id": getattr(request.state, "request_id", None),
+        "user_id": getattr(request.state, "user_id", None),
     }
     
     traceback.print_exc()

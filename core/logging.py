@@ -1,59 +1,63 @@
+from __future__ import annotations
+
 import logging
-import json
+import sys
+import time
+import uuid
+
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
-import time
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+from core.config import get_settings
 
 
-def setup_logging():
-    """Setup logging configuration"""
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+def setup_logging() -> None:
+    settings = get_settings()
+    level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.setLevel(level)
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(level)
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
     )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+    root.addHandler(handler)
+
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
-class LoggingMiddleware(BaseHTTPMiddleware):
-    """Request logging middleware"""
-    
+def _access_logger() -> logging.Logger:
+    return logging.getLogger("access")
+
+
+class AccessLogMiddleware(BaseHTTPMiddleware):
+    """Request ID (X-Request-ID) and one access log line per request."""
+
     async def dispatch(self, request: Request, call_next):
-        start_time = time.time()
-        
-        # Get request ID from state (set by RequestIDMiddleware)
-        request_id = getattr(request.state, "request_id", None)
-        
-        # Log request
-        logger.info(
-            json.dumps({
-                "type": "request",
-                "request_id": request_id,
-                "method": request.method,
-                "path": request.url.path,
-                "client": request.client.host if request.client else None
-            })
-        )
-        
-        response = await call_next(request)
-        
-        # Calculate duration
-        duration = time.time() - start_time
-        
-        # Log response
-        logger.info(
-            json.dumps({
-                "type": "response",
-                "request_id": request_id,
-                "method": request.method,
-                "path": request.url.path,
-                "status_code": response.status_code,
-                "duration_ms": round(duration * 1000, 2)
-            })
-        )
-        
-        return response
+        header_rid = request.headers.get("X-Request-ID")
+        request_id = header_rid if header_rid else str(uuid.uuid4())
+        request.state.request_id = request_id
 
+        start = time.perf_counter()
+        response = await call_next(request)
+        duration_ms = (time.perf_counter() - start) * 1000
+        user_id = getattr(request.state, "user_id", None)
+
+        response.headers["X-Request-ID"] = request_id
+
+        _access_logger().info(
+            "http_access method=%s path=%s status=%s duration_ms=%s request_id=%s user_id=%s client=%s",
+            request.method,
+            request.url.path,
+            response.status_code,
+            round(duration_ms, 2),
+            request_id,
+            user_id if user_id is not None else "-",
+            request.client.host if request.client else "-",
+        )
+        return response

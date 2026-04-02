@@ -7,7 +7,7 @@ from passlib.context import CryptContext
 from sqlmodel import Session, select
 
 from database.session import get_session
-from database.models.users import Users
+from database.models.users import UserRole, Users
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -60,12 +60,15 @@ def create_user(
     last_name: str,
     email: str,
     password: str,
+    *,
+    role: UserRole = UserRole.EMPLOYEE,
 ) -> Users:
     user = Users(
         first_name=first_name,
         last_name=last_name,
         email=email,
         password_hash=hash_password(password),
+        role=role,
     )
     session.add(user)
     session.commit()

@@ -35,6 +35,20 @@ Routers are registered in [`core/create_app.py`](core/create_app.py) with a URL 
 
 Session cookies (`session_id`) identify the user. Use `Depends(get_current_user)` from [`features/auth/dependencies.py`](features/auth/dependencies.py) when an endpoint requires a logged-in user.
 
+Users have a **`role`**: `admin` or `employee` (see [`database/models/users.py`](database/models/users.py)). `POST /auth/register` always creates an **employee**. The first **admin** is inserted by the Alembic seed migration ([`migrations/versions/g8b9c0d1e2f3_seed_admin_user.py`](migrations/versions/g8b9c0d1e2f3_seed_admin_user.py)) when `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` are set in the environment during `alembic upgrade`. Use `Depends(get_current_admin)` for admin-only routes.
+
+## Admin API (`/admin`)
+
+Implemented in [`features/admin/`](features/admin/). Requires an authenticated **admin**.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/admin/employees` | Paginated staff list; optional `q`; `offset`, `limit` (default 20, max 100) |
+| `POST` | `/admin/employees` | Create an **employee** (name, email, password) |
+| `GET` | `/admin/employees/{id}` | Get one user |
+| `PATCH` | `/admin/employees/{id}` | Update name, email, optional password, optional `role` |
+| `DELETE` | `/admin/employees/{id}` | Delete user if not self, not last admin, and no `loan` rows reference `user_id` |
+
 ## Library API (`/library`)
 
 Implemented across [`features/books/`](features/books/) (catalog and checkout/check-in), [`features/loans/`](features/loans/) (open loans list), and [`features/clients/`](features/clients/) (patron directory).
