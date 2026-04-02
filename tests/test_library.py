@@ -19,6 +19,10 @@ def test_library_requires_auth(client: TestClient):
     assert response.status_code == 401
     assert client.get("/library/loans").status_code == 401
     assert client.get("/library/clients").status_code == 401
+    assert client.post("/library/clients", json={"name": "A", "email": "a@a.com"}).status_code == 401
+    assert client.get("/library/clients/1").status_code == 401
+    assert client.patch("/library/clients/1", json={"name": "B"}).status_code == 401
+    assert client.delete("/library/clients/1").status_code == 401
 
 
 def test_books_crud(authenticated_client: TestClient):
@@ -305,3 +309,79 @@ def test_list_clients_after_checkout(authenticated_client: TestClient):
     assert page["items"][0]["name"] == "Alex Reader"
     assert page["items"][0]["email"] == "alex.reader@example.com"
     assert page["items"][0]["phone"] == "555-0100"
+
+
+def test_clients_crud(authenticated_client: TestClient):
+    c = authenticated_client
+    create = c.post(
+        "/library/clients",
+        json={
+            "name": "Patron One",
+            "email": "patron.one@example.com",
+            "phone": "555-0001",
+        },
+    )
+    assert create.status_code == 201
+    body = create.json()
+    client_id = body["id"]
+    assert body["name"] == "Patron One"
+    assert body["email"] == "patron.one@example.com"
+    assert body["phone"] == "555-0001"
+
+    dup = c.post(
+        "/library/clients",
+        json={"name": "Other", "email": "Patron.One@Example.com"},
+    )
+    assert dup.status_code == 400
+    assert "email" in dup.json()["detail"].lower()
+
+    assert c.get("/library/clients/99999").status_code == 404
+
+    one = c.get(f"/library/clients/{client_id}")
+    assert one.status_code == 200
+    assert one.json()["name"] == "Patron One"
+
+    patched = c.patch(
+        f"/library/clients/{client_id}",
+        json={"name": "Patron Updated"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["name"] == "Patron Updated"
+
+    assert c.delete(f"/library/clients/{client_id}").status_code == 204
+    assert c.get(f"/library/clients/{client_id}").status_code == 404
+
+
+def test_update_client_email_conflict(authenticated_client: TestClient):
+    c = authenticated_client
+    a = c.post(
+        "/library/clients",
+        json={"name": "A", "email": "a_unique@example.com"},
+    ).json()["id"]
+    b = c.post(
+        "/library/clients",
+        json={"name": "B", "email": "b_unique@example.com"},
+    ).json()["id"]
+    r = c.patch(f"/library/clients/{b}", json={"email": "a_unique@example.com"})
+    assert r.status_code == 400
+
+
+def test_delete_client_blocked_when_loan_exists(authenticated_client: TestClient):
+    c = authenticated_client
+    book_id = c.post(
+        "/library/books",
+        json={"title": "Tied", "author": "A"},
+    ).json()["id"]
+    c.post(f"/library/books/{book_id}/checkout", json=_CHECKOUT_CLIENT)
+    page = c.get("/library/clients").json()
+    assert page["total"] == 1
+    patron_id = page["items"][0]["id"]
+
+    r = c.delete(f"/library/clients/{patron_id}")
+    assert r.status_code == 400
+    assert "loan" in r.json()["detail"].lower()
+
+    c.post(f"/library/books/{book_id}/checkin")
+    r2 = c.delete(f"/library/clients/{patron_id}")
+    assert r2.status_code == 400
+    assert "loan" in r2.json()["detail"].lower()

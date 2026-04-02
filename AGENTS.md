@@ -22,14 +22,14 @@ This document helps humans and coding agents work on the **valsoft-library-backe
 | [`middlewares/`](middlewares/) | Cross-cutting HTTP concerns (e.g. exception handling) |
 | [`migrations/`](migrations/) | Alembic revisions |
 
-### Feature module pattern (see [`features/auth/`](features/auth/) and [`features/library/`](features/library/))
+### Feature module pattern (see [`features/auth/`](features/auth/), [`features/books/`](features/books/), [`features/loans/`](features/loans/), [`features/clients/`](features/clients/))
 
 - **`schemas.py`** — Pydantic request/response models (API contract). No DB calls.
 - **`services.py`** — Database and domain logic. Raises `ValueError` for business-rule failures; returns models or primitives.
 - **`controllers.py`** — Maps service outcomes to HTTP: translates `ValueError` and missing entities into `HTTPException`, builds response DTOs.
 - **`routes.py`** — FastAPI `APIRouter`: dependencies (`Depends(get_session)`, `Depends(get_current_user)`), HTTP method/path, delegates to controllers.
 
-Routers are registered in [`core/create_app.py`](core/create_app.py) with a URL prefix (e.g. `/auth`, `/library`).
+Routers are registered in [`core/create_app.py`](core/create_app.py) with a URL prefix (e.g. `/auth`, `/library`). The books, loans, and clients routers are each included with `prefix="/library"` so the public paths stay `/library/books`, `/library/loans`, `/library/clients`.
 
 ## Authentication
 
@@ -37,7 +37,7 @@ Session cookies (`session_id`) identify the user. Use `Depends(get_current_user)
 
 ## Library API (`/library`)
 
-Implemented under [`features/library/`](features/library/).
+Implemented across [`features/books/`](features/books/) (catalog and checkout/check-in), [`features/loans/`](features/loans/) (open loans list), and [`features/clients/`](features/clients/) (patron directory).
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -48,6 +48,10 @@ Implemented under [`features/library/`](features/library/).
 | `DELETE` | `/library/books/{book_id}` | Soft delete: sets `deleted_at` (row kept); fails if the book is checked out. Loan history is not removed. |
 | `GET` | `/library/loans` | Open loans for the current user; includes book fields and patron (`client_*`) when `loan.client_id` is set |
 | `GET` | `/library/clients` | Paginated patron directory; optional `q` (name/email); `offset`, `limit` (default 20, max 100). JSON: `items`, `total`, `limit`, `offset` |
+| `POST` | `/library/clients` | Create a patron (`name`, `email`, optional `phone`). Email is normalized (trim, lower); **create-only** — duplicate email returns 400 (checkout still upserts via `get_or_create_client`). |
+| `GET` | `/library/clients/{client_id}` | Get one patron |
+| `PATCH` | `/library/clients/{client_id}` | Update patron fields; email uniqueness enforced among clients |
+| `DELETE` | `/library/clients/{client_id}` | Remove patron row; **400** if any `loan` references this `client_id` (open or returned) |
 | `POST` | `/library/books/{book_id}/checkout` | Staff checkout; body: `client` (`name`, `email`, optional `phone`) and optional `due_at`. Upserts `client` by normalized email and sets `loan.client_id`. |
 | `POST` | `/library/books/{book_id}/checkin` | Return the book (same staff user who checked out; see below) |
 

@@ -39,7 +39,7 @@ def login(
         value=session_id,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
     )
     return login_response
 
@@ -69,7 +69,7 @@ def logout(
             key="session_id",
             httponly=True,
             secure=True,
-            samesite="lax",
+            samesite="none",
         )
     # Let FastAPI use the configured 204 status with an empty body.
     return None

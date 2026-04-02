@@ -6,58 +6,25 @@ from sqlmodel import Session
 from database.models.users import Users
 from database.session import get_session
 from features.auth.dependencies import get_current_user
-from features.library.controllers import (
+from features.books.controllers import (
     checkin_controller,
     checkout_controller,
     create_book_controller,
     delete_book_controller,
     get_book_controller,
     list_books_controller,
-    list_clients_controller,
-    list_my_loans_controller,
     update_book_controller,
 )
-from features.library.schemas import (
-    BookCreate,
-    BookListPage,
-    BookRead,
-    BookUpdate,
-    CheckoutRequest,
-    ClientListPage,
-    LoanRead,
-    MyOpenLoanRead,
-)
+from features.books.schemas import BookCreate, BookListPage, BookRead, BookUpdate
+from features.loans.schemas import CheckoutRequest, LoanRead
 
-library_router = APIRouter(
-    tags=["library"],
+books_router = APIRouter(
+    tags=["books"],
     dependencies=[Depends(get_current_user)],
 )
 
 
-@library_router.get("/loans", response_model=list[MyOpenLoanRead])
-def list_my_loans(
-    session: Session = Depends(get_session),
-    current_user: Users = Depends(get_current_user),
-) -> list[MyOpenLoanRead]:
-    return list_my_loans_controller(session, current_user)
-
-
-@library_router.get("/clients", response_model=ClientListPage)
-def list_clients(
-    session: Session = Depends(get_session),
-    q: Optional[str] = Query(default=None, description="Search name or email"),
-    offset: int = Query(default=0, ge=0, description="Number of rows to skip"),
-    limit: int = Query(
-        default=20,
-        ge=1,
-        le=100,
-        description="Page size (max 100)",
-    ),
-) -> ClientListPage:
-    return list_clients_controller(session, q=q, offset=offset, limit=limit)
-
-
-@library_router.get("/books", response_model=BookListPage)
+@books_router.get("/books", response_model=BookListPage)
 def list_books(
     session: Session = Depends(get_session),
     q: Optional[str] = Query(default=None, description="Search title, author, or ISBN"),
@@ -79,7 +46,7 @@ def list_books(
     )
 
 
-@library_router.post(
+@books_router.post(
     "/books",
     response_model=BookRead,
     status_code=status.HTTP_201_CREATED,
@@ -91,7 +58,7 @@ def create_book(
     return create_book_controller(payload, session)
 
 
-@library_router.get("/books/{book_id}", response_model=BookRead)
+@books_router.get("/books/{book_id}", response_model=BookRead)
 def get_book(
     book_id: int,
     session: Session = Depends(get_session),
@@ -99,7 +66,7 @@ def get_book(
     return get_book_controller(session, book_id)
 
 
-@library_router.patch("/books/{book_id}", response_model=BookRead)
+@books_router.patch("/books/{book_id}", response_model=BookRead)
 def update_book(
     book_id: int,
     payload: BookUpdate,
@@ -108,7 +75,7 @@ def update_book(
     return update_book_controller(book_id, payload, session)
 
 
-@library_router.delete("/books/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
+@books_router.delete("/books/{book_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_book(
     book_id: int,
     session: Session = Depends(get_session),
@@ -117,7 +84,7 @@ def delete_book(
     return None
 
 
-@library_router.post(
+@books_router.post(
     "/books/{book_id}/checkout",
     response_model=LoanRead,
     status_code=status.HTTP_201_CREATED,
@@ -131,7 +98,7 @@ def checkout_book(
     return checkout_controller(book_id, payload, current_user, session)
 
 
-@library_router.post("/books/{book_id}/checkin", response_model=LoanRead)
+@books_router.post("/books/{book_id}/checkin", response_model=LoanRead)
 def checkin_book(
     book_id: int,
     current_user: Users = Depends(get_current_user),

@@ -5,48 +5,17 @@ from typing import Optional
 from fastapi import HTTPException, status
 from sqlmodel import Session
 
-from database.models.users import Users
-from features.library import services as library_services
 from database.models.clients import Client
-from features.library.schemas import (
+from database.models.users import Users
+from features.books import services as book_services
+from features.books.schemas import (
     BookCreate,
     BookListPage,
     BookRead,
     BookUpdate,
-    CheckoutRequest,
-    ClientListPage,
-    ClientRead,
-    LoanRead,
-    MyOpenLoanRead,
 )
-
-
-def _to_book_read(
-    session: Session,
-    book,
-    *,
-    open_book_ids: Optional[set[int]] = None,
-) -> BookRead:
-    bid = book.id
-    if bid is None:
-        raise RuntimeError("book id missing after persist")
-    if open_book_ids is not None:
-        is_out = bid in open_book_ids
-    else:
-        is_out = library_services.book_has_open_loan(session, bid)
-    return BookRead(
-        id=bid,
-        title=book.title,
-        author=book.author,
-        isbn=book.isbn,
-        description=book.description,
-        published_year=book.published_year,
-        genre=book.genre,
-        image_url=book.image_url,
-        created_at=book.created_at,
-        updated_at=book.updated_at,
-        is_checked_out=is_out,
-    )
+from features.loans import services as loan_services
+from features.loans.schemas import CheckoutRequest, LoanRead
 
 
 def _loan_client_fields(client: Client | None) -> tuple[
@@ -65,57 +34,31 @@ def _loan_client_fields(client: Client | None) -> tuple[
     )
 
 
-def list_my_loans_controller(
+def _to_book_read(
     session: Session,
-    current_user: Users,
-) -> list[MyOpenLoanRead]:
-    rows = library_services.list_open_loans_for_user(
-        session,
-        current_user.id,  # type: ignore[arg-type]
-    )
-    result: list[MyOpenLoanRead] = []
-    for loan, book, patron in rows:
-        lid = loan.id
-        bid = book.id
-        if lid is None or bid is None:
-            raise RuntimeError("loan or book id missing after persist")
-        cid, cname, cemail, cphone = _loan_client_fields(patron)
-        result.append(
-            MyOpenLoanRead(
-                loan_id=lid,
-                book_id=bid,
-                book_title=book.title,
-                book_author=book.author,
-                client_id=cid,
-                client_name=cname,
-                client_email=cemail,
-                client_phone=cphone,
-                checked_out_at=loan.checked_out_at,
-                due_at=loan.due_at,
-            )
-        )
-    return result
-
-
-def list_clients_controller(
-    session: Session,
+    book,
     *,
-    q: Optional[str] = None,
-    offset: int = 0,
-    limit: int = 20,
-) -> ClientListPage:
-    clients, total = library_services.list_clients(
-        session,
-        q=q,
-        offset=offset,
-        limit=limit,
-    )
-    items = [ClientRead.model_validate(c, from_attributes=True) for c in clients]
-    return ClientListPage(
-        items=items,
-        total=total,
-        limit=limit,
-        offset=offset,
+    open_book_ids: Optional[set[int]] = None,
+) -> BookRead:
+    bid = book.id
+    if bid is None:
+        raise RuntimeError("book id missing after persist")
+    if open_book_ids is not None:
+        is_out = bid in open_book_ids
+    else:
+        is_out = loan_services.book_has_open_loan(session, bid)
+    return BookRead(
+        id=bid,
+        title=book.title,
+        author=book.author,
+        isbn=book.isbn,
+        description=book.description,
+        published_year=book.published_year,
+        genre=book.genre,
+        image_url=book.image_url,
+        created_at=book.created_at,
+        updated_at=book.updated_at,
+        is_checked_out=is_out,
     )
 
 
@@ -127,7 +70,7 @@ def list_books_controller(
     offset: int = 0,
     limit: int = 20,
 ) -> BookListPage:
-    books, total = library_services.list_books(
+    books, total = book_services.list_books(
         session,
         q=q,
         genre=genre,
@@ -135,7 +78,7 @@ def list_books_controller(
         limit=limit,
     )
     ids = [b.id for b in books if b.id is not None]
-    open_ids = library_services.book_ids_with_open_loans(session, ids)
+    open_ids = loan_services.book_ids_with_open_loans(session, ids)
     items = [_to_book_read(session, b, open_book_ids=open_ids) for b in books]
     return BookListPage(
         items=items,
@@ -146,7 +89,7 @@ def list_books_controller(
 
 
 def get_book_controller(session: Session, book_id: int) -> BookRead:
-    book = library_services.get_book_by_id(session, book_id)
+    book = book_services.get_book_by_id(session, book_id)
     if book is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -156,7 +99,7 @@ def get_book_controller(session: Session, book_id: int) -> BookRead:
 
 
 def create_book_controller(payload: BookCreate, session: Session) -> BookRead:
-    book = library_services.create_book(
+    book = book_services.create_book(
         session,
         title=payload.title,
         author=payload.author,
@@ -174,26 +117,26 @@ def update_book_controller(
     payload: BookUpdate,
     session: Session,
 ) -> BookRead:
-    book = library_services.get_book_by_id(session, book_id)
+    book = book_services.get_book_by_id(session, book_id)
     if book is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Book not found",
         )
     data = payload.model_dump(exclude_unset=True)
-    book = library_services.update_book(session, book, **data)
+    book = book_services.update_book(session, book, **data)
     return _to_book_read(session, book)
 
 
 def delete_book_controller(book_id: int, session: Session) -> None:
-    book = library_services.get_book_by_id(session, book_id)
+    book = book_services.get_book_by_id(session, book_id)
     if book is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Book not found",
         )
     try:
-        library_services.delete_book(session, book)
+        book_services.delete_book(session, book)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -208,7 +151,7 @@ def checkout_controller(
     session: Session,
 ) -> LoanRead:
     try:
-        loan, patron = library_services.checkout_book(
+        loan, patron = loan_services.checkout_book(
             session,
             book_id=book_id,
             user_id=current_user.id,  # type: ignore[arg-type]
@@ -254,7 +197,7 @@ def checkin_controller(
     session: Session,
 ) -> LoanRead:
     try:
-        loan = library_services.checkin_book(
+        loan = loan_services.checkin_book(
             session,
             book_id=book_id,
             acting_user_id=current_user.id,  # type: ignore[arg-type]

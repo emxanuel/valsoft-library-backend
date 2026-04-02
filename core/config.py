@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     DEBUG: bool = False
+    ALLOWED_ORIGINS: str = "https://valsoft-library-frontend.vercel.app"
 
     @field_validator("LOG_LEVEL")
     @classmethod
